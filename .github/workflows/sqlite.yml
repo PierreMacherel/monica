@@ -9,10 +9,11 @@ jobs:
       fail-fast: false
       matrix:
         operating-system: [ubuntu-latest]
-        php-version: ['7.4']
+        php-version: [7.4]
 
     steps:
-      - uses: actions/checkout@v1
+      - name: Checkout sources
+        uses: actions/checkout@v2
 
       - name: Setup PHP ${{ matrix.php-version }}
         uses: shivammathur/setup-php@v2
@@ -26,6 +27,7 @@ jobs:
       - name: Check PHP Extensions
         run: php -m
 
+    # Composer
       - name: Validate composer.json and composer.lock
         run: composer validate
 
@@ -41,9 +43,28 @@ jobs:
             ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
             ${{ runner.os }}-composer-
 
-      - name: Install dependencies
+      - name: Install composer dependencies
         run: composer install --no-interaction --no-suggest --ignore-platform-reqs
 
+    # Node.js
+      - name: Use Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 12.x
+      - name: Cache Node.js modules
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.OS }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.OS }}-node-
+            ${{ runner.OS }}-
+      - name: Install npm dependencies
+        run: npm install
+      - name: Build npm assets
+        run: npm run prod
+
+    # Prepare
       - name: Prepare environment
         run: cp tests/.env.ci.sqlite .env
       - name: Create SQLite database
@@ -62,6 +83,7 @@ jobs:
       - name: Run seeds
         run: php artisan db:seed --no-interaction -vvv
 
+    # Test
       - name: Run test suite
         run: phpdbg -dmemory_limit=4G -qrr vendor/bin/phpunit -c phpunit.xml --log-junit ./results/junit/results.xml --coverage-clover ./results/coverage.xml
         env:
@@ -83,18 +105,28 @@ jobs:
         php-version: ['7.4']
 
     steps:
-    - uses: actions/checkout@v1
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          # We must fetch at least the immediate parents so that if this is
+          # a pull request then we can checkout the head.
+          fetch-depth: 2
 
-    - name: Download results
-      uses: actions/download-artifact@v1
-      with:
-        name: results
+      # If this run was triggered by a pull request event, then checkout
+      # the head of the pull request instead of the merge commit.
+      - run: git checkout HEAD^2
+        if: ${{ github.event_name == 'pull_request' }}
 
-    - name: Fix coverage
-      run: sed -i -e "s%$GITHUB_WORKSPACE/%%g" results/coverage.xml
+      - name: Download results
+        uses: actions/download-artifact@v1
+        with:
+          name: results
 
-    - name: SonarCloud Scan
-      uses: SonarSource/sonarcloud-github-action@master
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Fix coverage
+        run: sed -i -e "s%$GITHUB_WORKSPACE/%%g" results/coverage.xml
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
